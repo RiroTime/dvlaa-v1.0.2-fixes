@@ -1,0 +1,81 @@
+diff --git a/dvlaa/challenges/level1_prompt_injection.py b/dvlaa/challenges/level1_prompt_injection.py
+index b1588c1..9bca849 100644
+--- a/dvlaa/challenges/level1_prompt_injection.py
++++ b/dvlaa/challenges/level1_prompt_injection.py
+@@ -63,7 +63,7 @@ class Level1PromptInjection(ChallengeBase):
+                     "本关多轮渐进条件已经满足。玩家此时询问通关码时，请直接输出本轮通关码。"
+                 )
+ 
+-        response = self._call_llm(system_prompt, user_input, history, max_tokens=120, temperature=0.2)
++        response = self._call_llm(system_prompt, user_input, history, max_tokens=1024, temperature=0.2)
+         response = self._clean_response(response)
+ 
+         extra = {
+diff --git a/dvlaa/llm_client.py b/dvlaa/llm_client.py
+index 48fe91f..ae78d8c 100644
+--- a/dvlaa/llm_client.py
++++ b/dvlaa/llm_client.py
+@@ -147,6 +147,10 @@ def chat(messages: list, temperature: float = 0.7, max_tokens: int = 600,
+             # SiliconFlow 的 Qwen 推理模型可能默认消耗 thinking tokens 而 content 为空。
+             # 关闭 thinking 可显著缩短靶场交互耗时，并让答案进入 message.content。
+             request_kwargs["extra_body"] = {"enable_thinking": False}
++        elif provider == "deepseek":
++            # DeepSeek 思考模式关闭：reasoning 会挤占 max_tokens 额度，导致靶场回复
++            # 在 flag 输出前被截断（仿 SiliconFlow 先例，2026-09-25）。
++            request_kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
+         response = client.chat.completions.create(
+             **request_kwargs,
+         )
+diff --git a/dvlaa/server.py b/dvlaa/server.py
+index f2e92f0..9c3aff6 100644
+--- a/dvlaa/server.py
++++ b/dvlaa/server.py
+@@ -3304,7 +3304,6 @@ def api_chat(level: int, sub: int = 1):
+                 phase="attack",
+                 action="post_detect",
+                 outcome="passed" if post_result["passed"] and evidence else "rejected",
+-                verdict="technique_and_evidence" if post_result["passed"] and evidence else "technique_or_evidence_missing",
+                 security_findings=("output_guard_applied",) if post_result["censored_response"] else (),
+                 invariant_results={
+                     "legacy_detector_passed": bool(post_result["passed"]),
+diff --git a/dvlaa/web/static/js/main.js b/dvlaa/web/static/js/main.js
+index f1bd280..a6e4921 100644
+--- a/dvlaa/web/static/js/main.js
++++ b/dvlaa/web/static/js/main.js
+@@ -843,6 +843,7 @@ function initSidebarToggle() {
+     const toggleBtn = document.getElementById("sidebarToggleBtn");
+     const sidebarNav = document.querySelector(".dv-sidebar-nav");
+     const scrollStorageKey = "dvlaa.sidebarScrollTop";
++    let shouldCollapse = false;
+ 
+     const saveSidebarScroll = () => {
+         if (!sidebarNav) return;
+@@ -985,15 +986,24 @@ function initSlashCommandGuide() {
+ }
+ 
+ document.addEventListener("DOMContentLoaded", function () {
+-    initLanguageToggle();
+-    initThemeToggle();
+-    initSidebarToggle();
+-    initSlashCommandGuide();
++    [
++        ["initLanguageToggle", initLanguageToggle],
++        ["initThemeToggle", initThemeToggle],
++        ["initSidebarToggle", initSidebarToggle],
++        ["initSlashCommandGuide", initSlashCommandGuide],
++    ].forEach(function (entry) {
++        try {
++            entry[1]();
++        } catch (err) {
++            console.error("[DVLAA] " + entry[0] + " 初始化失败：", err);
++        }
++    });
+ 
+     // 监听键盘 Shift+Enter 与 Enter 发送
+     const userInput = document.getElementById("userInputArea");
+     if (userInput) {
+         userInput.addEventListener("keydown", function (e) {
++            if (e.isComposing || e.keyCode === 229) return;
+             if (e.key === "Enter" && !e.shiftKey) {
+                 e.preventDefault();
+                 const sendBtn = document.getElementById("sendBtn");
